@@ -61,7 +61,8 @@ class AuthManager:
     
     def __init__(self, app):
         self.app = app
-        self.users_file = 'users.json'
+        # Use /tmp for Vercel (read-only filesystem except /tmp)
+        self.users_file = os.getenv('USERS_FILE', '/tmp/users.json' if os.getenv('VERCEL') else 'users.json')
         self.users = self._load_users()
     
     def _load_users(self):
@@ -77,9 +78,13 @@ class AuthManager:
     
     def _save_users(self):
         """Save users to file."""
-        data = {uid: user.to_dict() for uid, user in self.users.items()}
-        with open(self.users_file, 'w') as f:
-            json.dump(data, f, indent=2)
+        try:
+            data = {uid: user.to_dict() for uid, user in self.users.items()}
+            with open(self.users_file, 'w') as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            # On Vercel, /tmp might not persist, log error but continue
+            print(f"Warning: Could not save users file: {e}")
     
     def get_flow(self):
         """Create OAuth flow."""
