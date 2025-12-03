@@ -440,7 +440,15 @@ def auth_google():
     """Start Google OAuth flow."""
     flow = get_google_flow()
     if not flow:
-        return jsonify({'error': 'Google OAuth not configured'}), 500
+        # Показываем более понятную ошибку
+        missing = []
+        if not os.getenv('GOOGLE_CLIENT_ID'):
+            missing.append('GOOGLE_CLIENT_ID')
+        if not os.getenv('GOOGLE_CLIENT_SECRET'):
+            missing.append('GOOGLE_CLIENT_SECRET')
+        
+        error_msg = f'Google OAuth not configured. Missing: {", ".join(missing)}. Please add these environment variables in Vercel Settings.'
+        return jsonify({'error': error_msg, 'missing_vars': missing}), 500
     
     authorization_url, state = flow.authorization_url(
         access_type='offline',
