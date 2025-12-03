@@ -1,0 +1,179 @@
+#!/usr/bin/env python3
+"""Автоматическая настройка Vercel через API (без интерактивного ввода)."""
+import os
+import sys
+import secrets
+import requests
+import json
+
+VERCEL_PROJECT_ID = "prj_7iRRCewLVR3MFUFKUI27EG6SNzvY"
+VERCEL_API_URL = "https://api.vercel.com"
+
+def generate_flask_secret_key():
+    """Генерирует FLASK_SECRET_KEY."""
+    return secrets.token_hex(32)
+
+def get_vercel_token():
+    """Получает Vercel API токен из переменной окружения."""
+    token = os.getenv('VERCEL_TOKEN')
+    if not token:
+        print("❌ VERCEL_TOKEN не найден в переменных окружения")
+        print("\n💡 Как получить токен:")
+        print("1. Откройте https://vercel.com/account/tokens")
+        print("2. Создайте новый токен")
+        print("3. Экспортируйте: export VERCEL_TOKEN=your_token")
+        return None
+    return token
+
+def add_environment_variable(token, project_id, key, value, environments=None):
+    """Добавляет переменную окружения в Vercel проект."""
+    if environments is None:
+        environments = ['production', 'preview', 'development']
+    
+    url = f"{VERCEL_API_URL}/v10/projects/{project_id}/env"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    
+    results = []
+    for env in environments:
+        payload = {
+            "key": key,
+            "value": value,
+            "type": "encrypted",
+            "target": [env]
+        }
+        
+        try:
+            response = requests.post(url, headers=headers, json=payload)
+            if response.status_code in [200, 201]:
+                results.append(("success", env, key))
+            elif response.status_code == 409:
+                # Переменная уже существует, обновляем
+                env_id = get_env_id(token, project_id, key, env)
+                if env_id:
+                    update_url = f"{VERCEL_API_URL}/v10/projects/{project_id}/env/{env_id}"
+                    update_response = requests.patch(update_url, headers=headers, json={"value": value})
+                    if update_response.status_code in [200, 201]:
+                        results.append(("updated", env, key))
+                    else:
+                        results.append(("error", env, key, update_response.text))
+                else:
+                    results.append(("exists", env, key))
+            else:
+                results.append(("error", env, key, response.text))
+        except Exception as e:
+            results.append(("error", env, key, str(e)))
+    
+    return results
+
+def get_env_id(token, project_id, key, target):
+    """Получает ID существующей переменной окружения."""
+    url = f"{VERCEL_API_URL}/v10/projects/{project_id}/env"
+    headers = {"Authorization": f"Bearer {token}"}
+    
+    try:
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            envs = response.json().get('envs', [])
+            for env in envs:
+                if env.get('key') == key and target in env.get('target', []):
+                    return env.get('id')
+    except:
+        pass
+    return None
+
+def setup_vercel_auto():
+    """Автоматическая настройка с использованием переменных окружения."""
+    print("🚀 Автоматическая настройка Vercel через API\n")
+    print("="*60)
+    
+    # Получаем токен
+    token = get_vercel_token()
+    if not token:
+        return 1
+    
+    print(f"✅ Vercel токен найден\n")
+    print(f"📦 Project ID: {VERCEL_PROJECT_ID}\n")
+    print("="*60)
+    
+    # Получаем Google OAuth credentials из переменных окружения
+    google_client_id = os.getenv('GOOGLE_CLIENT_ID')
+    google_client_secret = os.getenv('GOOGLE_CLIENT_SECRET')
+    
+    if not google_client_id or not google_client_secret:
+        print("\n❌ Google OAuth credentials не найдены в переменных окружения")
+        print("\n💡 Установите переменные:")
+        print("   export GOOGLE_CLIENT_ID=your_client_id")
+        print("   export GOOGLE_CLIENT_SECRET=your_client_secret")
+        print("\n   Или запустите интерактивный скрипт: python3 setup_vercel.py")
+        return 1
+    
+    print(f"\n✅ GOOGLE_CLIENT_ID: {google_client_id[:20]}...")
+    print(f"✅ GOOGLE_CLIENT_SECRET: {google_client_secret[:10]}...")
+    
+    # Генерируем FLASK_SECRET_KEY
+    flask_secret_key = generate_flask_secret_key()
+    print(f"\n🔐 Сгенерированный FLASK_SECRET_KEY: {flask_secret_key}\n")
+    
+    # Переменные для добавления
+    env_vars = {
+        "GOOGLE_CLIENT_ID": google_client_id,
+        "GOOGLE_CLIENT_SECRET": google_client_secret,
+        "GOOGLE_REDIRECT_URI": "https://vidcourse-lesson-manager.vercel.app/auth/callback",
+        "FLASK_SECRET_KEY": flask_secret_key,
+        "FLASK_ENV": "production",
+        "VERCEL": "1"
+    }
+    
+    print("="*60)
+    print("📝 Добавление переменных окружения...\n")
+    
+    all_results = []
+    for key, value in env_vars.items():
+        print(f"Добавление {key}...")
+        results = add_environment_variable(token, VERCEL_PROJECT_ID, key, value)
+        for status, env, *rest in results:
+            if status == "success":
+                print(f"  ✅ Добавлена для {env}")
+            elif status == "updated":
+                print(f"  ✅ Обновлена для {env}")
+            elif status == "exists":
+                print(f"  ⚠️  Уже существует для {env}")
+            else:
+                print(f"  ❌ Ошибка для {env}: {rest[0] if rest else 'Unknown'}")
+        all_results.extend(results)
+        print()
+    
+    print("="*60)
+    
+    success_count = sum(1 for r in all_results if r[0] in ["success", "updated"])
+    error_count = sum(1 for r in all_results if r[0] == "error")
+    
+    print(f"\n📊 Итоги:")
+    print(f"✅ Успешно: {success_count}")
+    if error_count > 0:
+        print(f"❌ Ошибок: {error_count}")
+    
+    if error_count == 0:
+        print("\n🎉 Настройка завершена!")
+        print("\n💡 Следующие шаги:")
+        print("1. Пересоберите проект в Vercel Dashboard")
+        print("2. Убедитесь, что в Google Cloud Console добавлен redirect URI:")
+        print("   https://vidcourse-lesson-manager.vercel.app/auth/callback")
+        return 0
+    else:
+        return 1
+
+if __name__ == '__main__':
+    try:
+        sys.exit(setup_vercel_auto())
+    except KeyboardInterrupt:
+        print("\n\n❌ Прервано пользователем")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n❌ Ошибка: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
