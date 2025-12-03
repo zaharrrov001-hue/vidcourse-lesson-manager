@@ -18,6 +18,12 @@ from lesson_processor_v2 import LessonProcessor
 app = Flask(__name__)
 app.secret_key = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key-change-in-production')
 
+# Configure session for Vercel (serverless)
+# Use secure cookies and set proper domain
+app.config['SESSION_COOKIE_SECURE'] = os.getenv('FLASK_ENV') == 'production'
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+
 # Flask-Login setup
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -84,15 +90,19 @@ def get_user_drive_client(user):
     
     # Refresh if needed
     if creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-        session['google_credentials'] = {
-            'token': creds.token,
-            'refresh_token': creds.refresh_token,
-            'token_uri': creds.token_uri,
-            'client_id': creds.client_id,
-            'client_secret': creds.client_secret,
-            'scopes': creds.scopes
-        }
+        try:
+            creds.refresh(Request())
+            session['google_credentials'] = {
+                'token': creds.token,
+                'refresh_token': creds.refresh_token,
+                'token_uri': creds.token_uri,
+                'client_id': creds.client_id,
+                'client_secret': creds.client_secret,
+                'scopes': creds.scopes
+            }
+        except Exception as e:
+            print(f"Error refreshing token: {e}")
+            return None
     
     return build('drive', 'v3', credentials=creds)
 
